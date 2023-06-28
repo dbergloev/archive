@@ -1,0 +1,137 @@
+#!/bin/bash
+#
+# Automatically backup host ZFS datasets to an LXD Storage Server
+# ---------------------------------------------------------------
+#
+# This script will create snapshots of configured datasets and send them to a 
+# LXD container where they are stored in a file. 
+#
+# The script can rotate already backed up datasets allowing you to 
+# keeps multiple backups. 
+#
+# The concept will work fine with SSH backup as well and should not be dificult to adapt. 
+# Though the script does not support it in current state. 
+#
+# 
+# Requirements 
+# ------------
+#
+#   1. The LXD container must have a property `user.zfs_archive=1` set.
+#
+#   2. The LXD container must have a ZFS pool with the following dataset properties: 
+#
+#           * zfs:archive=1
+#           * zfs:archive.user=<user>
+#
+#      This is the target location for the dataset backup files. 
+#      The user will be the one with the permissions to the files (Defaults to 'root')
+#
+#   3. Each host dataset must have the following dataset properties:
+#
+#           * zfs:backup=1
+#           * zfs:backup.keep_<timer>=<keep>
+#
+
+timer="$1"
+
+###
+#
+#
+case $timer in
+    startup|shutdown) exit 0 ;; # Unused
+esac
+
+###
+#
+#
+get_prop_all() {
+    if [ -n "$4" ]; then
+        /snap/bin/lxc exec $4 -- sh -c "zfs get -o $1 -H -r -s local -t filesystem $2 $3"
+    
+    else
+        zfs get -o $1 -H -r -s local -t filesystem $2 $3
+    fi
+}
+
+get_prop() {
+    if [ -n "$4" ]; then
+        /snap/bin/lxc exec $4 -- sh -c "zfs get -o $1 -H $2 $3"
+    
+    else
+        zfs get -o $1 -H $2 $3
+    fi
+}
+
+zfs_rotate() {
+    local i x
+
+    for ((i=$(($3 - 1)),x=$3; i > 0; i--,x--)); do
+        lxc exec $1 -- sh -c "mv $2.$i.ds $2.$x.ds 2>/dev/null"
+    done
+}
+
+###
+#
+#
+if [ -f /snap/bin/lxc ]; then
+    for container in `/snap/bin/lxc ls -c ns --format=csv | grep RUNNING | cut -f1 -d,`; do
+        if [ -n "$container" ] && [ "`/snap/bin/lxc config get $container user.zfs_archive`" = "1" ]; then
+            for dst_volume in $(/snap/bin/lxc exec $container -- sh -c 'zfs list -o name -H -d 0'); do
+                for dst_dataset in $(get_prop_all name zfs:archive $dst_volume $container); do
+                    zfs_stat=$(get_prop value zfs:archive $dst_dataset $container)
+                    zfs_user=$(get_prop value zfs:archive.user $dst_dataset $container | sed 's/^$/root/')
+                    
+                    if [ "$zfs_stat" = "1" ]; then
+                        echo "Found target location at lxd://$container/$dst_dataset"
+                    
+                        for src_volume in $(zfs list -o name -H -d 0); do
+                            for src_dataset in $(get_prop_all name zfs:backup.keep_$timer $src_volume); do
+                                if [ "$(get_prop value zfs:backup $src_dataset)" = "1" ]; then
+                                    echo "Backing up '$src_dataset' to lxd://$container/$dst_dataset"
+                                    file="/$dst_dataset/$(sed 's/\//@/g' <<< "$src_dataset").$timer"
+                                    
+                                    zfs_rotate $container $file $(get_prop value zfs:backup.keep_$timer $src_dataset | sed 's/^0\?$/1/')
+                                    
+                                    for ((i=1; i < 4; i++)); do
+                                        case "$i" in 
+                                            1)
+                                                # Should not exist, but self-repair is always good to implement
+                                                if zfs list ${src_dataset}@archived >/dev/null 2>&1; then
+                                                    echo "Archived snapshot already exists, cleaning up..."
+                                                
+                                                    if zfs destroy ${src_dataset}@archived >/dev/null; then
+                                                        echo "Resuming backup process"
+                                                        zfs snapshot ${src_dataset}@archived
+                                                    fi
+                                                    
+                                                else
+                                                    zfs snapshot ${src_dataset}@archived
+                                                fi
+                                            ;;
+                                            
+                                            2)
+                                                zfs send ${src_dataset}@archived | /snap/bin/lxc exec $container -- sh -c "sudo -u $zfs_user -- tee $file.1.ds >/dev/null"
+                                            ;;
+                                            
+                                            3)
+                                                zfs destroy ${src_dataset}@archived
+                                            ;;
+                                        esac
+                                        
+                                        if [ $? -ne 0 ]; then
+                                            /usr/bin/alert "warning" "ZFS Backup" "Failed to backup dataset '$src_dataset' to LXD Storage"
+                                            
+                                            # Try to do a cleanup, unless this is what failed
+                                            zfs destroy ${src_dataset}@archived 2>/dev/null
+                                        fi
+                                    done
+                                fi
+                            done
+                        done
+                    fi
+                done
+            done
+        fi
+    done
+fi
+

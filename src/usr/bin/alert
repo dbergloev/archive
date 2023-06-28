@@ -1,0 +1,28 @@
+#!/bin/bash
+#
+# Simple alert file that scripts can use to send status updates. 
+# Having this in it's own seperate file allow you to switch
+# the message mechanism without having to go though each script.
+#
+
+declare domain="mydomain.com"
+declare token=""
+declare priorities=(
+    ["info"]=0 
+    ["warning"]=3 
+    ["error"]=7 
+    ["critical"]=10
+)
+
+curl "http://$domain/message?token=$token" \
+    -F "title=$2" \
+    -F "message=$3" \
+    -F "priority=${priorities[$1]}" >/dev/null 2>&1
+    
+if [ $? -ne 0 ]; then
+    echo "Failed to send the alert message" >&2
+
+else
+    echo "Alert message has been sent"
+fi
+

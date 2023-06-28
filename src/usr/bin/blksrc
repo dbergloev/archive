@@ -1,0 +1,31 @@
+#!/bin/bash
+#
+# Translates some like '/dev/mapper/device' -> '/dev/sda1'
+#
+
+if [ -z "$1" ]; then
+    echo "Usage: blksrc <device>" >&2; exit 1
+fi
+
+DEV="`readlink -f "$1"`"
+CLASS="`readlink -f /sys/**/block/$(basename "$DEV")`"
+
+if [ ! -b "$DEV" ]; then
+    echo "The device $DEV is not a block device" >&2; exit 1
+    
+elif [ ! -d "$CLASS" ]; then
+    echo "No class exists for the device $DEV" >&2; exit 1
+fi
+
+for link in $CLASS/slaves/*; do
+    if [ -e "$link" ]; then
+        name="`basename $link`"
+
+        if [ -b /dev/$name ]; then
+            echo /dev/$name; exit 0
+        fi
+    fi
+done
+
+echo $DEV
+
