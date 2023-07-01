@@ -87,44 +87,51 @@ if [ -f /snap/bin/lxc ]; then
                         for src_volume in $(zfs list -o name -H -d 0); do
                             for src_dataset in $(get_prop_all name zfs:backup.keep_$timer $src_volume); do
                                 if [ "$(get_prop value zfs:backup $src_dataset)" = "1" ]; then
-                                    echo "Backing up '$src_dataset' to lxd://$container/$dst_dataset"
-                                    file="/$dst_dataset/$(sed 's/\//@/g' <<< "$src_dataset").$timer"
-                                    
-                                    zfs_rotate $container $file $(get_prop value zfs:backup.keep_$timer $src_dataset | sed 's/^0\?$/1/')
-                                    
-                                    for ((i=1; i < 4; i++)); do
-                                        case "$i" in 
-                                            1)
-                                                # Should not exist, but self-repair is always good to implement
-                                                if zfs list ${src_dataset}@archived >/dev/null 2>&1; then
-                                                    echo "Archived snapshot already exists, cleaning up..."
-                                                
-                                                    if zfs destroy ${src_dataset}@archived >/dev/null; then
-                                                        echo "Resuming backup process"
+                                    keylocation="`get_prop value keylocation $src_dataset`"
+                                
+                                    if [[ "$keylocation" == "none" ]] || zfs get -o value -H mounted $src_dataset | grep -q 'yes'; then
+                                        echo "Backing up '$src_dataset' to lxd://$container/$dst_dataset"
+                                        file="/$dst_dataset/$(sed 's/\//@/g' <<< "$src_dataset").$timer"
+                                        
+                                        zfs_rotate $container $file $(get_prop value zfs:backup.keep_$timer $src_dataset | sed 's/^0\?$/1/')
+                                        
+                                        for ((i=1; i < 4; i++)); do
+                                            case "$i" in 
+                                                1)
+                                                    # Should not exist, but self-repair is always good to implement
+                                                    if zfs list ${src_dataset}@archived >/dev/null 2>&1; then
+                                                        echo "Archived snapshot already exists, cleaning up..."
+                                                    
+                                                        if zfs destroy ${src_dataset}@archived >/dev/null; then
+                                                            echo "Resuming backup process"
+                                                            zfs snapshot ${src_dataset}@archived
+                                                        fi
+                                                        
+                                                    else
                                                         zfs snapshot ${src_dataset}@archived
                                                     fi
-                                                    
-                                                else
-                                                    zfs snapshot ${src_dataset}@archived
-                                                fi
-                                            ;;
+                                                ;;
+                                                
+                                                2)
+                                                    zfs send ${src_dataset}@archived | /snap/bin/lxc exec $container -- sh -c "sudo -u $zfs_user -- tee $file.1.ds >/dev/null"
+                                                ;;
+                                                
+                                                3)
+                                                    zfs destroy ${src_dataset}@archived
+                                                ;;
+                                            esac
                                             
-                                            2)
-                                                zfs send ${src_dataset}@archived | /snap/bin/lxc exec $container -- sh -c "sudo -u $zfs_user -- tee $file.1.ds >/dev/null"
-                                            ;;
-                                            
-                                            3)
-                                                zfs destroy ${src_dataset}@archived
-                                            ;;
-                                        esac
-                                        
-                                        if [ $? -ne 0 ]; then
-                                            /usr/bin/alert "warning" "ZFS Backup" "Failed to backup dataset '$src_dataset' to LXD Storage"
-                                            
-                                            # Try to do a cleanup, unless this is what failed
-                                            zfs destroy ${src_dataset}@archived 2>/dev/null
-                                        fi
-                                    done
+                                            if [ $? -ne 0 ]; then
+                                                /usr/bin/alert "warning" "ZFS Backup" "Failed to backup dataset '$src_dataset' to LXD Storage"
+                                                
+                                                # Try to do a cleanup, unless this is what failed
+                                                zfs destroy ${src_dataset}@archived 2>/dev/null
+                                            fi
+                                        done
+                                    
+                                    else
+                                        echo "Warning : The dataset '$src_dataset' is encrypted, skipping..." >&2
+                                    fi
                                 fi
                             done
                         done
