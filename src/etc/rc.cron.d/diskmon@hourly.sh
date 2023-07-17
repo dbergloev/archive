@@ -60,5 +60,17 @@ for pool in $(zpool list -H -o name); do
     if [ $state -eq 0 ]; then
         /usr/bin/alert --id zfs_health_$pool --status reset
     fi
+    
+    avail=$(zfs get -Hp avail $pool | awk '{print $3}')
+    used=$(zfs get -Hp used $pool | awk '{print $3}')
+    perc=$(bc -l <<< "$used / ($avail + $used) * 100" | awk -F. '{print $1}')
+    
+    if [ $perc -gt 95 ]; then
+        echo "Warning : The zpool '$pool' exceeds 95% usage"
+        /usr/bin/alert --priority "medium" --title "ZFS Health Check" --id zfs_usage_$pool "The zpool '$pool' exceeds 95% usage"
+        
+    else
+        /usr/bin/alert --id zfs_usage_$pool --status reset
+    fi
 done
 
