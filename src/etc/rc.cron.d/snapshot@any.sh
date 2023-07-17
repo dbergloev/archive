@@ -38,7 +38,7 @@ for volume in $(zfs list -o name -H -d 0); do
             echo "Creating snapshot of '$dataset'"
             
             if ! /usr/bin/zfs-auto-snapshot --skip-scrub --prefix=snapshot --label=$timer --keep=$(get_prop value zfs:snapshot.keep_$timer $dataset) $dataset; then
-                /usr/bin/alert "warning" "ZFS Snapshot" "ZFS Auto Snapshot failed on dataset '$dataset' with error '$?'"
+                /usr/bin/alert --priority "medium" --title "ZFS Snapshot" "ZFS Auto Snapshot failed on dataset '$dataset' with error '$?'"
             fi
         fi
     done

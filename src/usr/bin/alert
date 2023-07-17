@@ -4,22 +4,159 @@
 # Having this in it's own seperate file allow you to switch
 # the message mechanism without having to go though each script.
 #
+###
+#
+# alert --id <id> --status <up/down/reset> --title <head> --priority <low,medium,...> --timeout <[0-9]+> <body>
+#
 
-declare domain="mydomain.com"
-declare token=""
-declare priorities=(
-    ["info"]=0 
-    ["warning"]=3 
-    ["error"]=7 
+declare -i ret=0
+declare id status=down title priority=medium message timeout=0
+declare conf=/tmp/alert
+
+declare -a servers=(
+    "domain.com"
+)
+
+declare -A priorities=(
+    ["low"]=0 
+    ["medium"]=3 
+    ["high"]=7 
     ["critical"]=10
 )
 
-curl "http://$domain/message?token=$token" \
-    -F "title=$2" \
-    -F "message=$3" \
-    -F "priority=${priorities[$1]}" >/dev/null 2>&1
+if [ ! -d $conf ]; then
+    mkdir -p $conf
+fi
+
+###
+#
+#
+while true; do
+    if [ -n "$1" ]; then
+        case "${1::1}" in
+            "-")
+                case "${1:2}" in
+                    id)
+                        shift
+                        id=$(md5sum <<< "$1" | awk '{print $1}')
+                    ;;
+                    
+                    status)
+                        shift
+                        status=$1
+                        
+                        if ! grep -qe '^\(up\|down\|reset\)$' <<< "$status"; then
+                            echo "Invalid status '$status'" >&2; exit 1
+                        fi
+                    ;;
+                    
+                    title)
+                        shift
+                        title="$1"
+                    ;;
+                    
+                    priority)
+                        shift
+                        priority=$1
+                        
+                        if ! grep -qe '^\(low\|medium\|high\|critical\)$' <<< "$priority"; then
+                            echo "Invalid priority '$priority'" >&2; exit 1
+                        fi
+                    ;;
+                    
+                    timeout)
+                        shift
+                        timeout=$1
+                        
+                        if ! grep -qe '^[0-9]\+$' <<< "$timeout"; then
+                            echo "Invalid timeout '$timeout'" >&2; exit 1
+                        fi
+                    ;;
+                    
+                    *)
+                        echo "Unknown option '$1'" >&2; exit 1
+                    ;;
+                esac
+            ;;
+            
+            *)
+                if [ -z "$message" ]; then
+                    message="$1"
+                
+                else
+                    echo "Invalid argument length" >&2; exit 1
+                fi
+            ;;
+        esac
     
-if [ $? -ne 0 ]; then
+    else
+        break
+    fi
+    
+    shift
+done
+
+###
+#
+#
+if [[ -n "$id" ]]; then
+    if [[ "$status" == "reset" ]]; then
+        if [[ -f $conf/$id ]]; then
+            rm $conf/$id
+        fi
+        
+        exit 0
+        
+    elif [[ "$status" == "up" ]]; then
+        if [[ -f $conf/$id ]]; then
+            rm $conf/$id
+            
+        else
+            exit 0
+        fi
+        
+    elif [[ "$status" == "down" ]]; then
+        if [[ -f $conf/$id ]]; then
+            if [[ $timeout -eq 0 || $(bc -s <<< "$(date +%s) - $timeout - $(cat $conf/$id)") -lt 0 ]]; then
+                exit 0
+            fi
+        fi
+        
+        echo "$(date +%s)" > $conf/$id
+    fi
+fi
+
+###
+#
+#
+if [[ -z "$message" ]]; then
+    echo "Invalid message length" >&2; exit 1
+fi
+
+for url in "${servers[@]}"; do
+    declare opt=(
+        "$url"
+        "-F"
+        "message=$message"
+        "-F"
+        "priority=${priorities[$priority]}"
+    )
+    
+    if [[ -n "$title" ]]; then
+        opt+=( "-F" "title=$title" )
+    fi
+
+    echo "Sending alert to '$(grep -oe '^\(http\(s\)\?://\)\?[^/]\+' <<< "$url")'"
+    output="$(curl "${opt[@]}" 2>/dev/null)"
+            
+    if [[ $? -ne 0 || $(grep -qe '"error":' <<< "$output") ]]; then
+        ret=1
+    fi
+    
+    unset opt
+done
+    
+if [ $ret -ne 0 ]; then
     echo "Failed to send the alert message" >&2
 
 else

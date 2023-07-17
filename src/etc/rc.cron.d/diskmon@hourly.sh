@@ -24,11 +24,15 @@ esac
 #
 #
 declare -a devices
+declare state
 
 for pool in $(zpool list -H -o name); do
+    state=0
+    
     if [[ "$(zpool list -H -o health $pool)" != "ONLINE" ]]; then
         echo "Critical : The zpool '$pool' needs your attention"
-        /usr/bin/alert "critical" "ZFS Health Check" "The zpool '$pool' needs your attention"
+        /usr/bin/alert --priority "critical" --title "ZFS Health Check" --id zfs_health_$pool --timeout 86400 "The zpool '$pool' needs your attention"
+        state=1
         
     else
         for device in $(zpool status -PL $pool | grep -oe '/dev/.*$' | awk '{print $1}'); do
@@ -44,12 +48,17 @@ for pool in $(zpool list -H -o name); do
                             devices+=( $(basename $device) )
                             
                             echo "Critical : SmartCTL Health Check" "The device '$device' that belongs to zpool '$pool' is in danger"
-                            /usr/bin/alert "critical" "SmartCTL Health Check" "The device '$device' that belongs to zpool '$pool' is in danger"
+                            /usr/bin/alert --priority "critical" --title "SmartCTL Health Check" --id zfs_health_$pool --timeout 86400 "The device '$device' that belongs to zpool '$pool' is in danger"
+                            state=1
                         fi
                     fi
                 fi
             fi
         done
+    fi
+    
+    if [ $state -eq 0 ]; then
+        /usr/bin/alert --id zfs_health_$pool --status reset
     fi
 done
 

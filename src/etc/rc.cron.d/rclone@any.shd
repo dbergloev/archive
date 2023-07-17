@@ -17,6 +17,13 @@
 
 timer="$1"
 
+declare -A priorities=(
+    ["info"]="low"
+    ["warning"]="medium"
+    ["error"]="high" 
+    ["critical"]="critical"
+)
+
 ###
 #
 #
@@ -46,7 +53,7 @@ is_mounted() {
 
 send_alert() {
     echo "$(date +"%Y/%m/%d %H:%M:%S") ${1^} : $2"
-    /usr/bin/alert "$1" "RClone backup" "$2"
+    /usr/bin/alert --priority ${priorities[$1]} --title "RClone backup" --id rclone_$3 --timeout $4 "$2"
 }
 
 send_msg() {
@@ -66,13 +73,13 @@ for volume in $(zfs list -o name -H -d 0); do
                 user="$(get_prop value rclone:sync.user $dataset)"
                 
                 if [ ! -f "$mount/.rclone" ]; then
-                    send_alert "critical" "Rclone failed due to possible disk falure. Missing sanity check file on dataset '$dataset'"
+                    send_alert "critical" "Rclone failed due to possible disk falure. Missing sanity check file on dataset '$dataset'" $dataset 86400; continue
                     
                 elif [[ -z "$user" || ! -f "$(grep "$user:" /etc/passwd | awk -F: '{print $6}')/.config/rclone/rclone.conf" ]]; then
-                    send_alert "critical" "Rclone failed due to invalid user or missing 'rclone.conf' for dataset '$dataset'"
+                    send_alert "critical" "Rclone failed due to invalid user or missing 'rclone.conf' for dataset '$dataset'" $dataset 86400; continue
                     
                 elif [ -z "$path" ] || ! grep -q "\[$(awk -F: '{print $1}' <<< "$path")\]" "$(grep "$user:" /etc/passwd | awk -F: '{print $6}')/.config/rclone/rclone.conf"; then
-                    send_alert "critical" "Rclone failed due to missing target path for dataset '$dataset'"
+                    send_alert "critical" "Rclone failed due to missing target path for dataset '$dataset'" $dataset 86400; continue
                 
                 elif [[ "$operation" == "sync" ]]; then
                     send_msg "Running rclone sync operation on dataset '$dataset'"
@@ -82,7 +89,7 @@ for volume in $(zfs list -o name -H -d 0); do
 
                         if [ $? -ne 0 ]; then
                             if [ $i -eq 0 ]; then
-                                send_alert "error" "Rclone failed to sync dataset '$dataset'"
+                                send_alert "error" "Rclone failed to sync dataset '$dataset'" $dataset 900; continue 2
                                   
                             else
                                 send_msg "Sync operation failed, retrying in 20s..."; sleep 20s
@@ -101,7 +108,7 @@ for volume in $(zfs list -o name -H -d 0); do
 
                         if [ $? -ne 0 ]; then
                             if [ $i -eq 0 ]; then
-                                send_alert "error" "Rclone failed to copy dataset '$dataset'"
+                                send_alert "error" "Rclone failed to copy dataset '$dataset'" $dataset 900; continue 2
                                   
                             else
                                 send_msg "Copy operation failed, retrying in 20s..."; sleep 20s
@@ -113,12 +120,14 @@ for volume in $(zfs list -o name -H -d 0); do
                     done
                     
                 else
-                     send_alert "warning" "Rclone failed due to unknown operation '$operation' on dataset '$dataset'"
+                     send_alert "warning" "Rclone failed due to unknown operation '$operation' on dataset '$dataset'" $dataset 86400; continue
                 fi
             
             else
-                send_alert "warning" "Rclone failed due to '$dataset' not being mounted"
+                send_alert "warning" "Rclone failed due to '$dataset' not being mounted" $dataset 86400; continue
             fi
+            
+            /usr/bin/alert --id rclone_$3 --status reset
         fi
     done
 done

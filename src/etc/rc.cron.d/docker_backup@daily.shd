@@ -82,7 +82,7 @@ if [ -f /snap/bin/lxc ]; then
                     zfs_user=$(get_prop value zfs:archive.user $dst_dataset $container | sed 's/^$/root/')
                     
                     if [ "$zfs_stat" = "1" ]; then
-                        echo "Found target location at lxd://$container/$dst_dataset"
+                        echo "Found target location at lxd://$container:/$dst_dataset"
                     
                         for src_volume in $(zfs list -o name -H -d 0); do
                             for src_dataset in $(get_prop_all name zfs:backup.keep_$timer $src_volume); do
@@ -90,7 +90,7 @@ if [ -f /snap/bin/lxc ]; then
                                     keylocation="`get_prop value keylocation $src_dataset`"
                                 
                                     if [[ "$keylocation" == "none" ]] || zfs get -o value -H mounted $src_dataset | grep -q 'yes'; then
-                                        echo "Backing up '$src_dataset' to lxd://$container/$dst_dataset"
+                                        echo "Backing up '$src_dataset' to lxd://$container:/$dst_dataset"
                                         file="/$dst_dataset/$(sed 's/\//@/g' <<< "$src_dataset").$timer"
                                         
                                         zfs_rotate $container $file $(get_prop value zfs:backup.keep_$timer $src_dataset | sed 's/^0\?$/1/')
@@ -122,7 +122,7 @@ if [ -f /snap/bin/lxc ]; then
                                             esac
                                             
                                             if [ $? -ne 0 ]; then
-                                                /usr/bin/alert "warning" "ZFS Backup" "Failed to backup dataset '$src_dataset' to LXD Storage"
+                                                /usr/bin/alert --priority "warning" --title "ZFS Backup" "Failed to backup dataset '$src_dataset' to LXD Storage"
                                                 
                                                 # Try to do a cleanup, unless this is what failed
                                                 zfs destroy ${src_dataset}@archived 2>/dev/null
